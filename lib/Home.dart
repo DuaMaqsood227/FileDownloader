@@ -15,14 +15,21 @@ class Home extends StatefulWidget {
   State<Home> createState() => _HomeState();
 }
 
+class _DownloadItem {
+  final String url;
+  double? progress;
+  String status = '';
+  String? filePath;
+  bool isDownloading = false;
+  bool isDownloaded = false;
+
+  _DownloadItem({required this.url});
+}
+
 class _HomeState extends State<Home> {
-  final TextEditingController url = TextEditingController();
-  double? _progress;
-  bool _isDownloading = false;
-  String _status = '';
-  String? _filePath;
+  final TextEditingController urlController = TextEditingController();
+  final List<_DownloadItem> _downloadItems = [];
   bool _showActionButton = false;
-  bool _isDownloaded = false;
 
   Future<void> requestPermissions() async {
     if (Platform.isAndroid) {
@@ -35,19 +42,19 @@ class _HomeState extends State<Home> {
   void initState() {
     super.initState();
     requestPermissions();
-    url.addListener(_updateActionButtonVisibility);
+    urlController.addListener(_updateActionButtonVisibility);
   }
 
   @override
   void dispose() {
-    url.removeListener(_updateActionButtonVisibility);
-    url.dispose();
+    urlController.removeListener(_updateActionButtonVisibility);
+    urlController.dispose();
     super.dispose();
   }
 
   void _updateActionButtonVisibility() {
     setState(() {
-      _showActionButton = url.text.trim().isNotEmpty;
+      _showActionButton = urlController.text.trim().isNotEmpty;
     });
   }
 
@@ -68,6 +75,107 @@ class _HomeState extends State<Home> {
     return (await getApplicationDocumentsDirectory()).path;
   }
 
+  void _addDownload() {
+    final url = urlController.text.trim();
+    if (url.isNotEmpty) {
+      setState(() {
+        _downloadItems.add(_DownloadItem(url: url));
+        urlController.clear();
+        _showActionButton = false;
+      });
+    }
+  }
+
+  void _startDownload(int index) async {
+    final item = _downloadItems[index];
+
+    setState(() {
+      item.isDownloading = true;
+      item.progress = 0.0;
+      item.status = '';
+      item.filePath = null;
+    });
+
+    String fileName = getFileNameFromUrl(item.url);
+    String dirPath = await getDownloadDirectory();
+    String fullPath = '$dirPath/$fileName';
+
+    FileDownloader.downloadFile(
+      url: item.url,
+      name: fileName,
+      downloadDestination: DownloadDestinations.publicDownloads,
+      onProgress: (name, progress) {
+        setState(() {
+          item.progress = progress;
+        });
+      },
+      onDownloadCompleted: (path) {
+        setState(() {
+          item.progress = null;
+          item.isDownloading = false;
+          item.status = '';
+          item.filePath = path;
+          item.isDownloaded = true;
+        });
+      },
+      onDownloadError: (errorMessage) {
+        setState(() {
+          item.progress = null;
+          item.isDownloading = false;
+          item.status = 'Download failed: $errorMessage';
+          item.isDownloaded = false;
+        });
+      },
+    );
+  }
+
+  void _startAllDownloads() {
+    for (int i = 0; i < _downloadItems.length; i++) {
+      if (!_downloadItems[i].isDownloading && !_downloadItems[i].isDownloaded) {
+        _startDownload(i);
+      }
+    }
+  }
+
+  void _openFile(int index) async {
+    final item = _downloadItems[index];
+    if (item.filePath == null || item.filePath!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('File path is empty!')),
+      );
+      return;
+    }
+
+    File file = File(item.filePath!);
+    if (!file.existsSync()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('File does not exist!')),
+      );
+      return;
+    }
+
+    try {
+      final result = await OpenFile.open(item.filePath!);
+      if (result.type != ResultType.done) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Cannot open file: ${result.message}'),
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error opening file: $e')),
+      );
+    }
+  }
+
+  void _removeDownloadItem(int index) {
+    setState(() {
+      _downloadItems.removeAt(index);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -84,7 +192,7 @@ class _HomeState extends State<Home> {
         appBar: AppBar(
           backgroundColor: const Color(0xff17202E),
           title: Text(
-            'File Downloader',
+            'Multi-File Downloader',
             style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 24),
           ),
           centerTitle: true,
@@ -97,35 +205,32 @@ class _HomeState extends State<Home> {
           ),
         ),
         body: Padding(
-          padding: const EdgeInsets.only(left: 16.0, right: 16, top: 56, bottom: 32),
+          padding: const EdgeInsets.only(left: 16.0, right: 16, top: 16, bottom: 16),
           child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Hero(
                 tag: 'splash',
                 child: SvgPicture.asset('assets/1.svg', height: 222, width: 222),
               ),
               Padding(
-                padding: const EdgeInsets.only(bottom: 48.0, top: 20),
+                padding: const EdgeInsets.only(bottom: 16.0, top: 8),
                 child: Text(
-                  'Download any file!',
-                  style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 30),
+                  'Download multiple files!',
+                  style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 24),
                 ),
               ),
               TextField(
                 style: const TextStyle(color: Colors.white),
-                controller: url,
+                controller: urlController,
                 decoration: InputDecoration(
                   filled: true,
                   fillColor: const Color(0xff111827).withOpacity(0.5),
                   suffixIcon: GestureDetector(
                     onTap: () {
-                      url.clear();
+                      urlController.clear();
                       setState(() {
-                        _progress = null;
-                        _status = '';
-                        _filePath = null;
                         _showActionButton = false;
-                        _isDownloaded = false;
                       });
                     },
                     child: const Icon(Icons.clear, color: Color(0xff9CA2AE)),
@@ -146,133 +251,138 @@ class _HomeState extends State<Home> {
                 ),
                 keyboardType: TextInputType.url,
               ),
-              const SizedBox(height: 40),
-              const Spacer(),
-
-              if (_progress != null)
-                Column(
-                  children: [
-                    CircularProgressIndicator(value: _progress),
-                    const SizedBox(height: 10),
-                    Text(
-                      'Downloading: ${(_progress! * 100).clamp(1, 100).toStringAsFixed(0)}%',
-                      style: GoogleFonts.inter(color: Colors.white),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _showActionButton ? _addDownload : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xff2563EB),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                  ],
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: const Text('Add'),
                 ),
-              const SizedBox(height: 30),
-
-              if (_showActionButton)
-                GestureDetector(
-                  onTap: !_isDownloading && !_isDownloaded ? _startDownload : (_isDownloaded ? _openFile : null),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xff2563EB),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Center(
-                      child: Text(
-                        _isDownloaded ? 'Open File' : 'Download',
-                        style: GoogleFonts.inter(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w600),
-                      ),
-                    ),
+              ),
+              if (_downloadItems.isNotEmpty)
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: _downloadItems.length,
+                    itemBuilder: (context, index) {
+                      final item = _downloadItems[index];
+                      return Card(
+                        color: const Color(0xff111827).withOpacity(0.5),
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: ListTile(
+                          title: Text(
+                            getFileNameFromUrl(item.url),
+                            style: GoogleFonts.inter(color: Colors.white),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.url,
+                                style: GoogleFonts.inter(color: Colors.white.withOpacity(0.7), fontSize: 12),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (item.progress != null)
+                                LinearProgressIndicator(
+                                  value: item.progress,
+                                  backgroundColor: Colors.grey.withOpacity(0.3),
+                                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xff2563EB)),
+                                ),
+                              if (item.status.isNotEmpty)
+                                Text(
+                                  item.status,
+                                  style: GoogleFonts.inter(color: Colors.red, fontSize: 12),
+                                ),
+                            ],
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (!item.isDownloading && !item.isDownloaded)
+                                IconButton(
+                                  icon: const Icon(Icons.download, color: Color(0xff2563EB)),
+                                  onPressed: () => _startDownload(index),
+                                ),
+                              if (item.isDownloaded)
+                                IconButton(
+                                  icon: const Icon(Icons.open_in_new, color: Colors.green),
+                                  onPressed: () => _openFile(index),
+                                ),
+                              if (!item.isDownloading)
+                                IconButton(
+                                  icon: const Icon(Icons.delete, color: Colors.red),
+                                  onPressed: () => _removeDownloadItem(index),
+                                ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ),
-
-              const SizedBox(height: 20),
-
-              if (_status.isNotEmpty)
-                Text(
-                  _status,
-                  style: const TextStyle(fontSize: 16, color: Colors.white),
-                  textAlign: TextAlign.center,
+              if (_downloadItems.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: ElevatedButton(
+                          onPressed: _startAllDownloads,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xff2563EB),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          child: Text(
+                            'Download All',
+                            style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton(
+                          onPressed: () {
+                            setState(() {
+                              _downloadItems.clear();
+                            });
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red.shade700,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          child: Text(
+                            'Clear All',
+                            style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
             ],
           ),
         ),
       ),
     );
-  }
-
-  void _startDownload() async {
-    setState(() {
-      _isDownloading = true;
-      _progress = 0.0;
-      _status = '';
-      _filePath = null;
-    });
-
-    String fileName = getFileNameFromUrl(url.text.trim());
-    String dirPath = await getDownloadDirectory();
-    String fullPath = '$dirPath/$fileName';
-
-    FileDownloader.downloadFile(
-      url: url.text.trim(),
-      name: fileName,
-      downloadDestination: DownloadDestinations.publicDownloads,
-      onProgress: (name, progress) {
-        setState(() {
-          _progress = progress;
-        });
-      },
-      onDownloadCompleted: (path) {
-        setState(() {
-          _progress = null;
-          _isDownloading = false;
-          _status = '';
-          _filePath = path;
-          _isDownloaded = true;
-        });
-      },
-      onDownloadError: (errorMessage) {
-        setState(() {
-          _progress = null;
-          _isDownloading = false;
-          _status = 'Download failed: $errorMessage';
-          _isDownloaded = false;
-        });
-      },
-    );
-  }
-
-  void _openFile() async {
-    if (_filePath == null || _filePath!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('File path is empty!')),
-      );
-      return;
-    }
-
-    File file = File(_filePath!);
-    if (!file.existsSync()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('File does not exist!')),
-      );
-      return;
-    }
-
-    try {
-      final result = await OpenFile.open(_filePath!);
-      if (result.type == ResultType.done) {
-        setState(() {
-          url.clear();
-          _isDownloaded = false;
-          _filePath = null;
-          _showActionButton = false;
-        });
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Cannot open file: ${result.message}'),
-          ),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error opening file: $e')),
-      );
-    }
   }
 }
